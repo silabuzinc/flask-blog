@@ -1,4 +1,4 @@
-from flask import render_template, flash, redirect, url_for, request
+from flask import render_template, flash, redirect, url_for, request, g, jsonify
 from flask_login import (
     LoginManager,
     logout_user,
@@ -6,7 +6,6 @@ from flask_login import (
     current_user,
     login_user,
 )
-from werkzeug.urls import url_parse
 from app import create_app
 from app.forms import LoginForm, PostForm, CommentForm
 from app.db import db
@@ -15,58 +14,32 @@ from app.models.usuarios import AnonymousUser, User
 from app.models.posts import Post
 from app.models.roles import Role
 from app.utils.utils import Permission
-from app.utils.decorator import admin_required, permission_required
+from app.utils.decorator import admin_required, permission_required, permission_required_rest
+import json
+from flask_httpauth import HTTPBasicAuth
 
+auth = HTTPBasicAuth()
 
 app = create_app()
-
 login = LoginManager(app)
-login.login_view = "login"
+login.login_view = "login.login_p"
 login.anonymous_user = AnonymousUser
-
 
 @login.user_loader
 def load_user(id):
     return User.query.get(int(id))
 
-
-@app.route("/")
-@login_required
-def index():
-    posts = Post.query.all()
-    return render_template("indexCss.html", posts=posts)
-
-
-@app.route("/login", methods=["GET", "POST"])
-def login():
-    if current_user.is_authenticated:
-        return redirect(url_for("index"))
-
-    form = LoginForm()
-    if form.validate_on_submit():
-        user = User.query.filter_by(username=form.username.data).first()
-        if user is None or not user.check_password(form.password.data):
-            flash("Invalid username or password")
-            return redirect(url_for("no_existe"))
-        login_user(user, remember=form.remember_me.data)
-        next_page = request.args.get("next")
-        print(type(next_page))
-        if not next_page or url_parse(next_page).netloc != "":
-            next_page = url_for("index")
-        return redirect(next_page)
-    return render_template("login.html", title="Sign In", form=form)
-
-
-@app.route("/logout")
-def logout():
-    logout_user()
-    return redirect(url_for("index"))
-
-
-@app.route("/no-existe")
-def no_existe():
-    return render_template("nouser.html")
-
+@auth.verify_password
+def verify_password(email, password):
+    if email == '':
+        return False
+    user = User.query.filter_by(email = email).first()
+    if not user:
+        return False
+    print(user.email)
+    g.current_user = user
+    print(g.current_user)
+    return user.check_password(password)
 
 @app.route("/admin")
 @login_required
@@ -102,13 +75,25 @@ def post():
     post_form = PostForm()
 
     if current_user.can(Permission.WRITE) and post_form.validate_on_submit():
-        new_post = Post(body=post_form.body.data, user_id=current_user.id)
+
+        new_post = Post(body=post_form.body.data, author=current_user._get_current_object())
         db.session.add(new_post)
         db.session.commit()
-
-        return redirect(url_for("index"))
+        print(request.headers)
+        return redirect(url_for("index.index"))
 
     return render_template("post.html", post_form=post_form)
+
+@app.route('/postJson/', methods=['POST'])
+@auth.login_required
+@permission_required_rest(Permission.WRITE)
+def new_post():
+    post = Post.from_json(request.json)
+    post.author = g.current_user
+    db.session.add(post)
+    db.session.commit()
+    return jsonify(post.to_json()), 201, {'Location': url_for('post_detail', id=post.id)}
+
 
 
 @app.route("/post/<id>")

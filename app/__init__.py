@@ -7,7 +7,8 @@ from flask_migrate import Migrate
 from app.models.posts import Post
 from app.models.usuarios import User
 from app.models.roles import Role
-
+from app.routes.login import login_page
+from app.routes.index import index_p
 
 def create_app():
     app = Flask(__name__)
@@ -17,4 +18,6 @@ def create_app():
     db = SQLAlchemy(app)
     migrate = Migrate(app, db)
 
+    app.register_blueprint(login_page)
+    app.register_blueprint(index_p)
     return app
